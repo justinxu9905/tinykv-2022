@@ -1,0 +1,113 @@
+package raft
+
+import pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+
+// sendHeartbeat sends a heartbeat RPC to the given peer.
+func (r *Raft) sendHeartbeat(to uint64) {
+	// Your Code Here (2A).
+	r.msgs = append(r.msgs, pb.Message{
+		From: r.id,
+		To: to,
+		Term: r.Term,
+		MsgType: pb.MessageType_MsgHeartbeat,
+	})
+}
+
+func (r *Raft) bcastHeartbeat() {
+	for peer := range r.Prs {
+		if peer == r.id {
+			continue
+		}
+		r.sendHeartbeat(peer)
+	}
+}
+
+func (r *Raft) handleHup() {
+	r.becomeCandidate()
+
+	if len(r.peers) == 1 {
+		r.becomeLeader()
+	}
+
+	for _, peer := range r.peers {
+		if peer == r.id {
+			continue
+		}
+		r.msgs = append(r.msgs, pb.Message{
+			From: r.id,
+			To: peer,
+			Term: r.Term,
+			MsgType: pb.MessageType_MsgRequestVote,
+		})
+	}
+}
+
+func (r *Raft) handleRequestVote(m pb.Message) {
+	if m.Term < r.Term {
+		r.msgs = append(r.msgs, pb.Message{
+			From: r.id,
+			To: m.From,
+			Term: m.Term,
+			Reject: true,
+			MsgType: pb.MessageType_MsgRequestVoteResponse,
+		})
+		return
+	} else if m.Term == r.Term {
+		if r.Vote == m.From {
+			r.msgs = append(r.msgs, pb.Message{
+				From: r.id,
+				To: m.From,
+				Term: m.Term,
+				MsgType: pb.MessageType_MsgRequestVoteResponse,
+			})
+			return
+		}
+		if r.Vote != 0 && r.Vote != m.From {
+			r.msgs = append(r.msgs, pb.Message{
+				From: r.id,
+				To: m.From,
+				Term: m.Term,
+				Reject: true,
+				MsgType: pb.MessageType_MsgRequestVoteResponse,
+			})
+			return
+		}
+	}
+
+	if m.Term > r.Term {
+		r.Vote = 0
+		r.becomeFollower(m.Term, None) // cannot make sure who is leader, just update term
+	}
+
+	r.Vote = m.From
+	r.becomeFollower(m.Term, m.From)
+	r.msgs = append(r.msgs, pb.Message{
+		From: r.id,
+		To: m.From,
+		Term: m.Term,
+		MsgType: pb.MessageType_MsgRequestVoteResponse,
+	})
+}
+
+// handleHeartbeat handle Heartbeat RPC request
+func (r *Raft) handleHeartbeat(m pb.Message) {
+	// Your Code Here (2A).
+	if m.Term < r.Term {
+		r.msgs = append(r.msgs, pb.Message{
+			From: r.id,
+			To: m.From,
+			Term: r.Term,
+			Reject: true,
+			MsgType: pb.MessageType_MsgHeartbeatResponse,
+		})
+		return
+	}
+
+	r.becomeFollower(m.Term, m.From)
+	r.msgs = append(r.msgs, pb.Message{
+		From: r.id,
+		To: m.From,
+		Term: r.Term,
+		MsgType: pb.MessageType_MsgHeartbeatResponse,
+	})
+}
