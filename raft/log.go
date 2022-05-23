@@ -15,7 +15,6 @@
 package raft
 
 import (
-	"fmt"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -93,7 +92,6 @@ func (l *RaftLog) unstableEntries() []pb.Entry {
 // nextEnts returns all the committed but not applied entries
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	// Your Code Here (2A).
-	fmt.Println(l.entries)
 	if len(l.entries) > 0 {
 		return l.entries[l.applied-l.first+1 : l.committed-l.first+1]
 	}

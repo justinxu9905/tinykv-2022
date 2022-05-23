@@ -1,6 +1,8 @@
 package raft
 
-import pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+import (
+	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+)
 
 // sendAppend sends an append RPC with new entries (if any) and the
 // current commit index to the given peer. Returns true if a message was sent.
@@ -84,42 +86,61 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 
 	r.becomeFollower(m.Term, m.From)
 
-	logTermAtPrevIndex, _ := r.RaftLog.Term(m.Index)
+	prevLogIndex := m.Index
 	lastLogIndex := r.RaftLog.LastIndex()
-	if m.Index > lastLogIndex {
+	if prevLogIndex > lastLogIndex {
 		r.msgs = append(r.msgs, pb.Message{
 			From: r.id,
 			To: m.From,
 			Reject: true,
+			Term: r.Term,
 			Index: lastLogIndex,
 			MsgType: pb.MessageType_MsgAppendResponse,
 		})
 		return
-	} else if logTermAtPrevIndex == m.LogTerm {
-		for _, entry := range m.Entries {
-			r.RaftLog.entries = append(r.RaftLog.entries[0:m.Index], *entry)
-		}
-		r.msgs = append(r.msgs, pb.Message{
-			From: r.id,
-			To: m.From,
-			Index: r.RaftLog.LastIndex(),
-			MsgType: pb.MessageType_MsgAppendResponse,
-		})
-	} else {
+	}
+	logTermAtPrevIndex, _ := r.RaftLog.Term(prevLogIndex)
+	if logTermAtPrevIndex != m.LogTerm {
 		term := logTermAtPrevIndex
-		idx := m.Index
-		for idx > r.RaftLog.committed && r.RaftLog.entries[idx].Term == term {
+		idx := prevLogIndex
+		for idx > r.RaftLog.committed && int(idx) < len(r.RaftLog.entries) && r.RaftLog.entries[idx].Term == term {
 			idx -= 1
 		}
 		r.msgs = append(r.msgs, pb.Message{
 			From: r.id,
 			To: m.From,
 			Reject: true,
+			Term: r.Term,
 			Index: idx,
 			MsgType: pb.MessageType_MsgAppendResponse,
 		})
 		return
 	}
+
+	for _, entry := range m.Entries {
+		if entry.Index < r.RaftLog.first {
+			continue
+		}
+		if entry.Index <= r.RaftLog.LastIndex() {
+			logTerm, _ := r.RaftLog.Term(entry.Index)
+			if logTerm != entry.Term {
+				idx := entry.Index-r.RaftLog.first
+				r.RaftLog.entries[idx] = *entry
+				r.RaftLog.entries = r.RaftLog.entries[:idx+1]
+				r.RaftLog.stabled = min(r.RaftLog.stabled, entry.Index-1)
+			}
+		} else {
+			r.RaftLog.entries = append(r.RaftLog.entries, *entry)
+		}
+	}
+
+	r.msgs = append(r.msgs, pb.Message{
+		From: r.id,
+		To: m.From,
+		Term: r.Term,
+		Index: r.RaftLog.LastIndex(),
+		MsgType: pb.MessageType_MsgAppendResponse,
+	})
 
 	if r.RaftLog.committed < m.Commit {
 		r.RaftLog.committed = m.Commit
