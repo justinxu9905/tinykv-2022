@@ -29,6 +29,9 @@ func (r *Raft) handleHup() {
 		r.becomeLeader()
 	}
 
+	lastLogIndex := r.RaftLog.LastIndex()
+	lastLogTerm, _ := r.RaftLog.Term(lastLogIndex)
+
 	for _, peer := range r.peers {
 		if peer == r.id {
 			continue
@@ -37,6 +40,8 @@ func (r *Raft) handleHup() {
 			From: r.id,
 			To: peer,
 			Term: r.Term,
+			Index: lastLogIndex,
+			LogTerm: lastLogTerm,
 			MsgType: pb.MessageType_MsgRequestVote,
 		})
 	}
