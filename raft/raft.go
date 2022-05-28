@@ -251,7 +251,7 @@ func (r *Raft) becomeLeader() {
 	lastLogIndex := r.RaftLog.LastIndex()
 	for _, peer := range r.peers {
 		r.Prs[peer].Next = lastLogIndex + 1
-		r.Prs[peer].Match = lastLogIndex
+		//r.Prs[peer].Match = lastLogIndex
 	}
 
 	r.RaftLog.entries = append(r.RaftLog.entries, pb.Entry{
@@ -260,6 +260,7 @@ func (r *Raft) becomeLeader() {
 	})
 	r.Prs[r.id].Next++
 	r.Prs[r.id].Match++
+	r.bcastAppend()
 }
 
 // Step the entrance of handle message, see `MessageType`

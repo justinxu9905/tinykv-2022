@@ -74,6 +74,7 @@ func (r *Raft) appendEntries(entries []*pb.Entry) {
 func (r *Raft) handleAppendEntries(m pb.Message) {
 	// Your Code Here (2A).
 	if m.Term < r.Term {
+		//fmt.Println("?")
 		r.msgs = append(r.msgs, pb.Message{
 			From: r.id,
 			To: m.From,
@@ -89,6 +90,7 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 	prevLogIndex := m.Index
 	lastLogIndex := r.RaftLog.LastIndex()
 	if prevLogIndex > lastLogIndex {
+		//fmt.Println("..", prevLogIndex, lastLogIndex)
 		r.msgs = append(r.msgs, pb.Message{
 			From: r.id,
 			To: m.From,
@@ -148,11 +150,31 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 }
 
 func (r *Raft) handleAppendResponse(m pb.Message) {
+	if m.Term > r.Term {
+		r.becomeFollower(m.Term, None)
+		return
+	}
+
+	if r.State != StateLeader || r.Term != m.Term {
+		return
+	}
+
+	//fmt.Println(m.From, m.Index, m.Reject)
+
 	if !m.Reject {
 		if m.Index + 1 > r.Prs[m.From].Next {
 			r.Prs[m.From].Next = m.Index + 1
 			r.Prs[m.From].Match = m.Index
 		}
+		oldCommitted := r.RaftLog.committed
 		r.tryToCommit()
+		if r.RaftLog.committed > oldCommitted {
+			r.bcastAppend()
+		}
+		return
+	}
+
+	if m.Index + 1 > 0 {
+		r.Prs[m.From].Next = m.Index + 1 //m.index means last index
 	}
 }

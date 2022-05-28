@@ -1,6 +1,8 @@
 package raft
 
-import pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+import (
+	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+)
 
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 func (r *Raft) sendHeartbeat(to uint64) {
@@ -52,7 +54,7 @@ func (r *Raft) handleRequestVote(m pb.Message) {
 		r.msgs = append(r.msgs, pb.Message{
 			From: r.id,
 			To: m.From,
-			Term: m.Term,
+			Term: r.Term,
 			Reject: true,
 			MsgType: pb.MessageType_MsgRequestVoteResponse,
 		})
@@ -62,7 +64,7 @@ func (r *Raft) handleRequestVote(m pb.Message) {
 			r.msgs = append(r.msgs, pb.Message{
 				From: r.id,
 				To: m.From,
-				Term: m.Term,
+				Term: r.Term,
 				MsgType: pb.MessageType_MsgRequestVoteResponse,
 			})
 			return
@@ -71,7 +73,7 @@ func (r *Raft) handleRequestVote(m pb.Message) {
 			r.msgs = append(r.msgs, pb.Message{
 				From: r.id,
 				To: m.From,
-				Term: m.Term,
+				Term: r.Term,
 				Reject: true,
 				MsgType: pb.MessageType_MsgRequestVoteResponse,
 			})
@@ -84,12 +86,25 @@ func (r *Raft) handleRequestVote(m pb.Message) {
 		r.becomeFollower(m.Term, None) // cannot make sure who is leader, just update term
 	}
 
+	lastLogIndex := r.RaftLog.LastIndex()
+	lastLogTerm, _ := r.RaftLog.Term(lastLogIndex)
+	if lastLogTerm > m.LogTerm || (lastLogTerm == m.LogTerm && lastLogIndex > m.Index) {
+		r.msgs = append(r.msgs, pb.Message{
+			From: r.id,
+			To: m.From,
+			Term: r.Term,
+			Reject: true,
+			MsgType: pb.MessageType_MsgRequestVoteResponse,
+		})
+		return
+	}
+
 	r.Vote = m.From
 	r.becomeFollower(m.Term, m.From)
 	r.msgs = append(r.msgs, pb.Message{
 		From: r.id,
 		To: m.From,
-		Term: m.Term,
+		Term: r.Term,
 		MsgType: pb.MessageType_MsgRequestVoteResponse,
 	})
 }
