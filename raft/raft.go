@@ -260,6 +260,7 @@ func (r *Raft) becomeLeader() {
 	})
 	r.Prs[r.id].Next++
 	r.Prs[r.id].Match++
+	//fmt.Println(r.id, "becomes leader and has entries", r.RaftLog.entries)
 	r.bcastAppend()
 }
 
@@ -311,7 +312,7 @@ func (r *Raft) Step(m pb.Message) error {
 		} else if m.MsgType == pb.MessageType_MsgHeartbeat {
 			r.handleHeartbeat(m)
 		} else if m.MsgType == pb.MessageType_MsgHeartbeatResponse {
-
+			r.sendAppend(m.From)
 		} else if m.MsgType == pb.MessageType_MsgRequestVote {
 			r.handleRequestVote(m)
 		} else if m.MsgType == pb.MessageType_MsgPropose {

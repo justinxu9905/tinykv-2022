@@ -125,7 +125,7 @@ func TestLeaderCycle2AA(t *testing.T) {
 // newly-elected leader does *not* have the newest (i.e. highest term)
 // log entries, and must overwrite higher-term log entries with
 // lower-term ones.
-func TestLeaderElectionOverwriteNewerLogs2AB(t *testing.T) {
+func TestLeaderElectionOverwriteNewerLogs2AB(t *testing.T) {// dead loop
 	cfg := func(c *Config) {
 		c.peers = idsBySize(5)
 	}
@@ -344,6 +344,11 @@ func TestCommitWithoutNewTermEntry2AB(t *testing.T) {
 	// after append a ChangeTerm entry from the current term, all entries
 	// should be committed
 	tt.send(pb.Message{From: 2, To: 2, MsgType: pb.MessageType_MsgHup})
+
+	fmt.Println(sm.RaftLog.entries)
+	fmt.Println(tt.peers[2].(*Raft).RaftLog.entries)
+	fmt.Println(tt.peers[3].(*Raft).RaftLog.entries)
+	fmt.Println(tt.peers[4].(*Raft).RaftLog.entries)
 
 	if sm.RaftLog.committed != 4 {
 		t.Errorf("committed = %d, want %d", sm.RaftLog.committed, 4)

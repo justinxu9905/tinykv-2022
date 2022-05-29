@@ -29,6 +29,7 @@ func (r *Raft) sendAppend(to uint64) bool {
 		prevLogTerm, _ = r.RaftLog.Term(prevLogIndex)
 	}
 
+	//fmt.Println(r.id, "send append req to", to, prevLogTerm, prevLogIndex, entries, r.RaftLog.committed)
 	r.msgs = append(r.msgs, pb.Message{
 		MsgType: pb.MessageType_MsgAppend,
 		From: r.id,
@@ -105,7 +106,8 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 	if logTermAtPrevIndex != m.LogTerm {
 		term := logTermAtPrevIndex
 		idx := prevLogIndex
-		for idx > r.RaftLog.committed && int(idx) < len(r.RaftLog.entries) && r.RaftLog.entries[idx].Term == term {
+		//fmt.Println("!", r.RaftLog.entries)
+		for idx > r.RaftLog.committed && r.RaftLog.entries[idx].Term == term {
 			idx -= 1
 		}
 		r.msgs = append(r.msgs, pb.Message{
@@ -155,11 +157,11 @@ func (r *Raft) handleAppendResponse(m pb.Message) {
 		return
 	}
 
-	if r.State != StateLeader || r.Term != m.Term {
+	if r.State != StateLeader || r.Term < m.Term {
 		return
 	}
 
-	//fmt.Println(m.From, m.Index, m.Reject)
+	//fmt.Println(m.From, m.Term, m.Index, m.Reject)
 
 	if !m.Reject {
 		if m.Index + 1 > r.Prs[m.From].Next {
@@ -176,5 +178,6 @@ func (r *Raft) handleAppendResponse(m pb.Message) {
 
 	if m.Index + 1 > 0 {
 		r.Prs[m.From].Next = m.Index + 1 //m.index means last index
+		r.sendAppend(m.From)
 	}
 }
