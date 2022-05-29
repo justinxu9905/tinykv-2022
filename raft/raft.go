@@ -233,9 +233,6 @@ func (r *Raft) becomeCandidate() {
 	r.electionElapsed = 0
 	r.Vote = r.id
 	r.votes = make(map[uint64]bool)
-	for _, i := range r.peers {
-		r.votes[i] = false
-	}
 	r.votes[r.id] = true
 }
 
@@ -289,18 +286,18 @@ func (r *Raft) Step(m pb.Message) error {
 			r.handleRequestVote(m)
 		} else if m.MsgType == pb.MessageType_MsgRequestVoteResponse {
 			r.votes[m.From] = !m.Reject
-			n := len(r.votes)
-			c := 0
+			n := len(r.peers)
+			grant := 0
+			votes := len(r.votes)
 			for _, v := range r.votes {
 				if v {
-					c++
+					grant++
 				}
 			}
-			if c <= n/2 {
-				break
-			}
-			if r.Term == m.Term {
+			if grant > n/2 {
 				r.becomeLeader()
+			} else if votes-grant > n/2 {
+				r.becomeFollower(r.Term, None)
 			}
 		} else if m.MsgType == pb.MessageType_MsgAppend {
 			r.handleAppendEntries(m)

@@ -107,7 +107,11 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 		term := logTermAtPrevIndex
 		idx := prevLogIndex
 		//fmt.Println("!", r.RaftLog.entries)
-		for idx > r.RaftLog.committed && r.RaftLog.entries[idx].Term == term {
+		for idx > r.RaftLog.committed {
+			curTerm, _ := r.RaftLog.Term(idx)
+			if curTerm != term {
+				break
+			}
 			idx -= 1
 		}
 		r.msgs = append(r.msgs, pb.Message{
