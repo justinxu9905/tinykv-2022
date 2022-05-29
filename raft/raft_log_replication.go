@@ -151,7 +151,7 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 	})
 
 	if r.RaftLog.committed < m.Commit {
-		r.RaftLog.committed = m.Commit
+		r.RaftLog.committed = min(m.Commit, m.Index+uint64(len(m.Entries)))
 	}
 }
 

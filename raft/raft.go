@@ -285,20 +285,7 @@ func (r *Raft) Step(m pb.Message) error {
 		} else if m.MsgType == pb.MessageType_MsgRequestVote {
 			r.handleRequestVote(m)
 		} else if m.MsgType == pb.MessageType_MsgRequestVoteResponse {
-			r.votes[m.From] = !m.Reject
-			n := len(r.peers)
-			grant := 0
-			votes := len(r.votes)
-			for _, v := range r.votes {
-				if v {
-					grant++
-				}
-			}
-			if grant > n/2 {
-				r.becomeLeader()
-			} else if votes-grant > n/2 {
-				r.becomeFollower(r.Term, None)
-			}
+			r.handleRequestVoteResponse(m)
 		} else if m.MsgType == pb.MessageType_MsgAppend {
 			r.handleAppendEntries(m)
 		}

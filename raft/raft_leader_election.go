@@ -100,13 +100,30 @@ func (r *Raft) handleRequestVote(m pb.Message) {
 	}
 
 	r.Vote = m.From
-	r.becomeFollower(m.Term, m.From)
+	r.becomeFollower(m.Term, None)
 	r.msgs = append(r.msgs, pb.Message{
 		From: r.id,
 		To: m.From,
 		Term: r.Term,
 		MsgType: pb.MessageType_MsgRequestVoteResponse,
 	})
+}
+
+func (r *Raft) handleRequestVoteResponse(m pb.Message) {
+	r.votes[m.From] = !m.Reject
+	n := len(r.peers)
+	grant := 0
+	votes := len(r.votes)
+	for _, v := range r.votes {
+		if v {
+			grant++
+		}
+	}
+	if grant > n/2 {
+		r.becomeLeader()
+	} else if votes-grant > n/2 {
+		r.becomeFollower(r.Term, None)
+	}
 }
 
 // handleHeartbeat handle Heartbeat RPC request
