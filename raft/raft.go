@@ -260,7 +260,7 @@ func (r *Raft) becomeLeader() {
 	})
 	r.Prs[r.id].Next++
 	r.Prs[r.id].Match++
-	//fmt.Println(r.id, "becomes leader and has entries", r.RaftLog.entries)
+
 	r.bcastAppend()
 	if len(r.peers) == 1 {
 		r.RaftLog.committed = r.Prs[r.id].Match

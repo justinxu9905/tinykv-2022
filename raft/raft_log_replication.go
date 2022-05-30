@@ -29,7 +29,6 @@ func (r *Raft) sendAppend(to uint64) bool {
 		prevLogTerm, _ = r.RaftLog.Term(prevLogIndex)
 	}
 
-	//fmt.Println(r.id, "send append req to", to, prevLogTerm, prevLogIndex, entries, r.RaftLog.committed)
 	r.msgs = append(r.msgs, pb.Message{
 		MsgType: pb.MessageType_MsgAppend,
 		From: r.id,
@@ -75,7 +74,6 @@ func (r *Raft) appendEntries(entries []*pb.Entry) {
 func (r *Raft) handleAppendEntries(m pb.Message) {
 	// Your Code Here (2A).
 	if m.Term < r.Term {
-		//fmt.Println("?")
 		r.msgs = append(r.msgs, pb.Message{
 			From: r.id,
 			To: m.From,
@@ -91,7 +89,6 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 	prevLogIndex := m.Index
 	lastLogIndex := r.RaftLog.LastIndex()
 	if prevLogIndex > lastLogIndex {
-		//fmt.Println("..", prevLogIndex, lastLogIndex)
 		r.msgs = append(r.msgs, pb.Message{
 			From: r.id,
 			To: m.From,
@@ -106,7 +103,6 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 	if logTermAtPrevIndex != m.LogTerm {
 		term := logTermAtPrevIndex
 		idx := prevLogIndex
-		//fmt.Println("!", r.RaftLog.entries)
 		for idx > r.RaftLog.committed {
 			curTerm, _ := r.RaftLog.Term(idx)
 			if curTerm != term {
@@ -164,8 +160,6 @@ func (r *Raft) handleAppendResponse(m pb.Message) {
 	if r.State != StateLeader || r.Term < m.Term {
 		return
 	}
-
-	//fmt.Println(m.From, m.Term, m.Index, m.Reject)
 
 	if !m.Reject {
 		if m.Index + 1 > r.Prs[m.From].Next {
