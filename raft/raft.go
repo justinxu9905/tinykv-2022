@@ -182,6 +182,9 @@ func newRaft(c *Config) *Raft {
 		electionTimeout: c.ElectionTick + rand.Int() % c.ElectionTick,
 		heartbeatTimeout: c.HeartbeatTick,
 	}
+
+	hardSt, _, _ := c.Storage.InitialState()
+	r.Term, r.Vote, r.RaftLog.committed = hardSt.GetTerm(), hardSt.GetVote(), hardSt.GetCommit()
 	return r
 }
 
@@ -259,6 +262,9 @@ func (r *Raft) becomeLeader() {
 	r.Prs[r.id].Match++
 	//fmt.Println(r.id, "becomes leader and has entries", r.RaftLog.entries)
 	r.bcastAppend()
+	if len(r.peers) == 1 {
+		r.RaftLog.committed = r.Prs[r.id].Match
+	}
 }
 
 // Step the entrance of handle message, see `MessageType`
