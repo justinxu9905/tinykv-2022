@@ -65,7 +65,7 @@ func (r *Raft) appendEntries(entries []*pb.Entry) {
 	}
 	r.Prs[r.id].Next = r.RaftLog.LastIndex()+1
 	r.Prs[r.id].Match = r.RaftLog.LastIndex()
-	r.tryToCommit()
+	r.maybeCommit()
 
 	r.bcastAppend()
 }
@@ -167,7 +167,7 @@ func (r *Raft) handleAppendResponse(m pb.Message) {
 			r.Prs[m.From].Match = m.Index
 		}
 		oldCommitted := r.RaftLog.committed
-		r.tryToCommit()
+		r.maybeCommit()
 		if r.RaftLog.committed > oldCommitted {
 			r.bcastAppend()
 		}

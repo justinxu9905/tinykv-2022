@@ -332,7 +332,7 @@ func (r *Raft) removeNode(id uint64) {
 	// Your Code Here (3A).
 }
 
-func (r *Raft) tryToCommit() {
+func (r *Raft) maybeCommit() {
 	for i := r.RaftLog.committed + 1; i <= uint64(len(r.RaftLog.entries)); i++ {
 		cnt := 0
 		for _, pr := range r.Prs {
