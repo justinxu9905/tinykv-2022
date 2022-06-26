@@ -168,23 +168,36 @@ func newRaft(c *Config) *Raft {
 		panic(err.Error())
 	}
 	// Your Code Here (2A).
-	prs := make(map[uint64]*Progress, 0)
-	for _, peer := range c.peers {
-		prs[peer] = &Progress{}
-	}
+
 	r := &Raft{
 		id: c.ID,
 		State: StateFollower,
-		Prs: prs,
+		Prs: make(map[uint64]*Progress),
 		RaftLog: newLog(c.Storage),
-		peers: c.peers,
 		electionTimeoutBaseline: c.ElectionTick,
 		electionTimeout: c.ElectionTick + rand.Int() % c.ElectionTick,
 		heartbeatTimeout: c.HeartbeatTick,
 	}
 
-	hardSt, _, _ := c.Storage.InitialState()
-	r.Term, r.Vote, r.RaftLog.committed = hardSt.GetTerm(), hardSt.GetVote(), hardSt.GetCommit()
+	hardState, confState, _ := c.Storage.InitialState()
+	r.Term, r.Vote, r.RaftLog.committed = hardState.GetTerm(), hardState.GetVote(), hardState.GetCommit()
+
+	if c.peers == nil {
+		c.peers = confState.Nodes
+	}
+	r.peers = c.peers
+	lastIndex := r.RaftLog.LastIndex()
+	for _, peer := range r.peers {
+		if peer == r.id {
+			r.Prs[peer] = &Progress{Next: lastIndex + 1, Match: lastIndex}
+		} else {
+			r.Prs[peer] = &Progress{Next: lastIndex + 1}
+		}
+	}
+
+	if c.Applied > 0 {
+		r.RaftLog.applied = c.Applied
+	}
 	return r
 }
 
@@ -267,6 +280,18 @@ func (r *Raft) becomeLeader() {
 	}
 }
 
+func (r *Raft) softState() *SoftState {
+	return &SoftState{Lead: r.Lead, RaftState: r.State}
+}
+
+func (r *Raft) hardState() pb.HardState {
+	return pb.HardState{
+		Term:   r.Term,
+		Vote:   r.Vote,
+		Commit: r.RaftLog.committed,
+	}
+}
+
 // Step the entrance of handle message, see `MessageType`
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
@@ -332,7 +357,7 @@ func (r *Raft) removeNode(id uint64) {
 	// Your Code Here (3A).
 }
 
-func (r *Raft) maybeCommit() {
+func (r *Raft) tryCommit() {
 	for i := r.RaftLog.committed + 1; i <= uint64(len(r.RaftLog.entries)); i++ {
 		cnt := 0
 		for _, pr := range r.Prs {
