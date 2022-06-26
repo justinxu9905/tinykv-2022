@@ -78,12 +78,12 @@ type RawNode struct {
 func NewRawNode(config *Config) (*RawNode, error) {
 	// Your Code Here (2A).
 	r := newRaft(config)
-	rawNode := &RawNode{
+	rn := &RawNode{
 		Raft: r,
 		prevSoftState: r.softState(),
 		prevHardState: r.hardState(),
 	}
-	return rawNode, nil
+	return rn, nil
 }
 
 // Tick advances the internal logical clock by a single tick.
@@ -167,6 +167,7 @@ func (rn *RawNode) Ready() Ready {
 	if !isHardStateEqual(hardState, rn.prevHardState) {
 		rd.HardState = hardState
 	}
+	rn.Raft.msgs = make([]pb.Message, 0)
 	if !IsEmptySnap(r.RaftLog.pendingSnapshot) {
 		rd.Snapshot = *r.RaftLog.pendingSnapshot
 		r.RaftLog.pendingSnapshot = nil

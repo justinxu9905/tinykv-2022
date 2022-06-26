@@ -59,57 +59,86 @@ func (d *peerMsgHandler) HandleRaftReady() {
 					panic(err)
 				}
 
-				req := msg.Requests[0]
-				switch req.CmdType {
-				case raft_cmdpb.CmdType_Get:
-				case raft_cmdpb.CmdType_Put:
-					kvWB.SetCF(req.Put.Cf, req.Put.Key, req.Put.Value)
-				case raft_cmdpb.CmdType_Delete:
-					kvWB.DeleteCF(req.Delete.Cf, req.Delete.Key)
-				case raft_cmdpb.CmdType_Snap:
-				}
+				if len(msg.Requests) > 0 {
+					req := msg.Requests[0]
 
-				if len(d.proposals) > 0 {
-					p := d.proposals[0]
-					if p.index == entry.Index && p.term == entry.Term {
-						resp := &raft_cmdpb.RaftCmdResponse{}
-						switch req.CmdType {
-						case raft_cmdpb.CmdType_Get:
-							d.peerStorage.applyState.AppliedIndex = entry.Index
-							kvWB.SetMeta(meta.ApplyStateKey(d.regionId), d.peerStorage.applyState)
-							kvWB.WriteToDB(d.peerStorage.Engines.Kv)
-							value, err := engine_util.GetCF(d.peerStorage.Engines.Kv, req.Get.Cf, req.Get.Key)
-							if err != nil {
-								value = nil
-							}
-							resp.Responses = append(resp.Responses, &raft_cmdpb.Response{
-								CmdType: raft_cmdpb.CmdType_Get,
-								Get: &raft_cmdpb.GetResponse{
-									Value: value,
-								},
-							})
-						case raft_cmdpb.CmdType_Put:
-							resp.Responses = append(resp.Responses, &raft_cmdpb.Response{
-								CmdType: raft_cmdpb.CmdType_Put,
-								Put:     &raft_cmdpb.PutResponse{},
-							})
-						case raft_cmdpb.CmdType_Delete:
-							resp.Responses = append(resp.Responses, &raft_cmdpb.Response{
-								CmdType: raft_cmdpb.CmdType_Delete,
-								Delete:     &raft_cmdpb.DeleteResponse{},
-							})
-						case raft_cmdpb.CmdType_Snap:
-							resp.Responses = append(resp.Responses, &raft_cmdpb.Response{
-								CmdType: raft_cmdpb.CmdType_Snap,
-								Snap:     &raft_cmdpb.SnapResponse{
-									Region: d.Region(),
-								},
-							})
-							p.cb.Txn = d.peerStorage.Engines.Kv.NewTransaction(false)
-						}
-						p.cb.Done(resp)
+					var key []byte
+					switch req.CmdType {
+					case raft_cmdpb.CmdType_Get:
+						key = req.Get.Key
+					case raft_cmdpb.CmdType_Put:
+						key = req.Put.Key
+					case raft_cmdpb.CmdType_Delete:
+						key = req.Delete.Key
 					}
-					d.proposals = d.proposals[1:]
+					if key != nil {
+						err := util.CheckKeyInRegion(key, d.Region())
+						if err != nil {
+							if len(d.proposals) > 0 {
+								p := d.proposals[0]
+								if p.index == entry.Index && p.term == entry.Term {
+									p.cb.Done(ErrResp(err))
+								} else {
+									NotifyStaleReq(entry.Term, p.cb)
+								}
+							}
+						}
+					}
+
+					switch req.CmdType {
+					case raft_cmdpb.CmdType_Get:
+					case raft_cmdpb.CmdType_Put:
+						kvWB.SetCF(req.Put.Cf, req.Put.Key, req.Put.Value)
+					case raft_cmdpb.CmdType_Delete:
+						kvWB.DeleteCF(req.Delete.Cf, req.Delete.Key)
+					case raft_cmdpb.CmdType_Snap:
+					}
+
+					if len(d.proposals) > 0 {
+						p := d.proposals[0]
+						if p.index == entry.Index && p.term == entry.Term {
+							resp := &raft_cmdpb.RaftCmdResponse{Header: &raft_cmdpb.RaftResponseHeader{}}
+							switch req.CmdType {
+							case raft_cmdpb.CmdType_Get:
+								d.peerStorage.applyState.AppliedIndex = entry.Index
+								kvWB.SetMeta(meta.ApplyStateKey(d.regionId), d.peerStorage.applyState)
+								kvWB.WriteToDB(d.peerStorage.Engines.Kv)
+								kvWB = engine_util.WriteBatch{}
+								value, err := engine_util.GetCF(d.peerStorage.Engines.Kv, req.Get.Cf, req.Get.Key)
+								if err != nil {
+									value = nil
+								}
+								resp.Responses = append(resp.Responses, &raft_cmdpb.Response{
+									CmdType: raft_cmdpb.CmdType_Get,
+									Get: &raft_cmdpb.GetResponse{
+										Value: value,
+									},
+								})
+							case raft_cmdpb.CmdType_Put:
+								resp.Responses = append(resp.Responses, &raft_cmdpb.Response{
+									CmdType: raft_cmdpb.CmdType_Put,
+									Put:     &raft_cmdpb.PutResponse{},
+								})
+							case raft_cmdpb.CmdType_Delete:
+								resp.Responses = append(resp.Responses, &raft_cmdpb.Response{
+									CmdType: raft_cmdpb.CmdType_Delete,
+									Delete:     &raft_cmdpb.DeleteResponse{},
+								})
+							case raft_cmdpb.CmdType_Snap:
+								resp.Responses = append(resp.Responses, &raft_cmdpb.Response{
+									CmdType: raft_cmdpb.CmdType_Snap,
+									Snap:     &raft_cmdpb.SnapResponse{
+										Region: d.Region(),
+									},
+								})
+								p.cb.Txn = d.peerStorage.Engines.Kv.NewTransaction(false)
+							}
+							p.cb.Done(resp)
+						} else {
+							NotifyStaleReq(entry.Term, p.cb)
+						}
+						d.proposals = d.proposals[1:]
+					}
 				}
 			}
 			d.peerStorage.applyState.AppliedIndex = rd.CommittedEntries[len(rd.CommittedEntries)-1].Index
