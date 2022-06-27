@@ -18,6 +18,7 @@ import (
 	"errors"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 	"math/rand"
+	"sort"
 )
 
 // None is a placeholder node ID used when there is no leader.
@@ -358,18 +359,23 @@ func (r *Raft) removeNode(id uint64) {
 }
 
 func (r *Raft) tryCommit() {
-	for i := r.RaftLog.committed + 1; i <= uint64(len(r.RaftLog.entries)); i++ {
-		cnt := 0
-		for _, pr := range r.Prs {
-			if pr.Match >= i {
-				cnt++
-				if cnt > len(r.peers)/2 {
-					r.RaftLog.committed = i
-				}
-			}
+	match := make(uint64Slice, len(r.Prs))
+	i := 0
+	for _, prs := range r.Prs {
+		match[i] = prs.Match
+		i++
+	}
+	sort.Sort(match)
+	n := match[(len(r.Prs)-1)/2]
+
+	if n > r.RaftLog.committed {
+		logTerm, err := r.RaftLog.Term(n)
+		if err != nil {
+			panic(err)
 		}
-		if r.RaftLog.committed != i {
-			break
+		if logTerm == r.Term {
+			r.RaftLog.committed = n
+			//r.bcastAppend()
 		}
 	}
 }
