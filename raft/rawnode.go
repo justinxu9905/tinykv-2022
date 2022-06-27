@@ -162,6 +162,7 @@ func (rn *RawNode) Ready() Ready {
 	softState := r.softState()
 	hardState := r.hardState()
 	if !isSoftStateEqual(softState, rn.prevSoftState) {
+		rn.prevSoftState = softState
 		rd.SoftState = softState
 	}
 	if !isHardStateEqual(hardState, rn.prevHardState) {
