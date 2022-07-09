@@ -62,6 +62,13 @@ func (d *peerMsgHandler) HandleRaftReady() {
 
 				if len(msg.Requests) > 0 {
 					d.handleRequest(&entry, msg, &kvWB)
+				} else {
+					adminReq := &raft_cmdpb.AdminRequest{}
+					err = adminReq.Unmarshal(entry.Data)
+					if err != nil {
+						panic(err)
+					}
+					d.handleAdminRequest(adminReq, &kvWB)
 				}
 			}
 			d.peerStorage.applyState.AppliedIndex = rd.CommittedEntries[len(rd.CommittedEntries)-1].Index
@@ -143,7 +150,7 @@ func (d *peerMsgHandler) handleRequest(entry *eraftpb.Entry, msg *raft_cmdpb.Raf
 			resp.Responses = []*raft_cmdpb.Response{
 				{
 					CmdType: raft_cmdpb.CmdType_Get,
-					Get: &raft_cmdpb.GetResponse{
+					Get:     &raft_cmdpb.GetResponse{
 						Value: value,
 					},
 				},
@@ -160,10 +167,13 @@ func (d *peerMsgHandler) handleRequest(entry *eraftpb.Entry, msg *raft_cmdpb.Raf
 			resp.Responses = []*raft_cmdpb.Response{
 				{
 					CmdType: raft_cmdpb.CmdType_Delete,
-					Delete:     &raft_cmdpb.DeleteResponse{},
+					Delete:  &raft_cmdpb.DeleteResponse{},
 				},
 			}
 		case raft_cmdpb.CmdType_Snap:
+			d.peerStorage.applyState.AppliedIndex = entry.Index
+			wb.SetMeta(meta.ApplyStateKey(d.regionId), d.peerStorage.applyState)
+			wb.WriteToDB(d.peerStorage.Engines.Kv)
 			resp.Responses = []*raft_cmdpb.Response{
 				{
 					CmdType: raft_cmdpb.CmdType_Snap,
@@ -173,10 +183,25 @@ func (d *peerMsgHandler) handleRequest(entry *eraftpb.Entry, msg *raft_cmdpb.Raf
 				},
 			}
 			p.cb.Txn = d.peerStorage.Engines.Kv.NewTransaction(false)
+			wb = &engine_util.WriteBatch{}
 		}
 		p.cb.Done(resp)
 	})
 	return wb
+}
+
+func (d *peerMsgHandler) handleAdminRequest(req *raft_cmdpb.AdminRequest, wb *engine_util.WriteBatch) {
+	switch req.CmdType {
+	case raft_cmdpb.AdminCmdType_CompactLog:
+		compactLog := req.GetCompactLog()
+		applySt := d.peerStorage.applyState
+		if compactLog.CompactIndex >= applySt.TruncatedState.Index {
+			applySt.TruncatedState.Index = compactLog.CompactIndex
+			applySt.TruncatedState.Term = compactLog.CompactTerm
+			wb.SetMeta(meta.ApplyStateKey(d.regionId), applySt)
+			d.ScheduleCompactLog(applySt.TruncatedState.Index)
+		}
+	}
 }
 
 func (d *peerMsgHandler) handleProposal(entry *eraftpb.Entry, handle func(*proposal)) {

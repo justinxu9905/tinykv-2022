@@ -11,6 +11,13 @@ func (r *Raft) sendAppend(to uint64) bool {
 	var prevLogTerm, prevLogIndex uint64
 	var entries []*pb.Entry
 	nextIdx := r.Prs[to].Next
+	if _, err := r.RaftLog.Term(nextIdx-1); err != nil {
+		if err == ErrCompacted {
+			r.sendSnapshot(to)
+			return false
+		}
+	}
+
 	lastLogIndex := r.RaftLog.LastIndex()
 	lastLogTerm, _ := r.RaftLog.Term(lastLogIndex)
 
@@ -39,7 +46,7 @@ func (r *Raft) sendAppend(to uint64) bool {
 		Entries: entries,
 		Commit: r.RaftLog.committed,
 	})
-	return false
+	return true
 }
 
 func (r *Raft) bcastAppend() {

@@ -307,6 +307,8 @@ func (r *Raft) Step(m pb.Message) error {
 			r.handleRequestVote(m)
 		} else if m.MsgType == pb.MessageType_MsgAppend {
 			r.handleAppendEntries(m)
+		} else if m.MsgType == pb.MessageType_MsgSnapshot {
+			r.handleSnapshot(m)
 		}
 		break
 	case StateCandidate:
@@ -343,9 +345,60 @@ func (r *Raft) Step(m pb.Message) error {
 	return nil
 }
 
+func (r *Raft) sendSnapshot(to uint64) {
+	snapshot, err := r.RaftLog.storage.Snapshot()
+	if err != nil {
+		return
+	}
+	r.msgs = append(r.msgs, pb.Message{
+		MsgType: pb.MessageType_MsgSnapshot,
+		From: r.id,
+		To: to,
+		Term: r.Term,
+		Snapshot: &snapshot,
+	})
+	r.Prs[to].Next = snapshot.Metadata.Index + 1
+}
+
 // handleSnapshot handle Snapshot RPC request
 func (r *Raft) handleSnapshot(m pb.Message) {
 	// Your Code Here (2C).
+	meta := m.Snapshot.Metadata
+	if meta.Index <= r.RaftLog.committed {
+		r.msgs = append(r.msgs, pb.Message{
+			From: r.id,
+			To: m.From,
+			Reject: false,
+			Term: r.Term,
+			Index: r.RaftLog.committed,
+			MsgType: pb.MessageType_MsgAppendResponse,
+		})
+		return
+	}
+
+	r.becomeFollower(m.Term, m.From)
+
+	if len(r.RaftLog.entries) > 0 {
+		r.RaftLog.entries = nil
+	}
+	r.RaftLog.stabled = meta.Index
+	r.RaftLog.committed = meta.Index
+	r.RaftLog.applied = meta.Index
+	r.RaftLog.first = meta.Index + 1
+	r.peers = meta.ConfState.Nodes
+	r.Prs = make(map[uint64]*Progress)
+	for _, peer := range r.peers {
+		r.Prs[peer] = &Progress{}
+	}
+	r.RaftLog.pendingSnapshot = m.Snapshot
+	r.msgs = append(r.msgs, pb.Message{
+		From: r.id,
+		To: m.From,
+		Reject: false,
+		Term: r.Term,
+		Index: r.RaftLog.LastIndex(),
+		MsgType: pb.MessageType_MsgAppendResponse,
+	})
 }
 
 // addNode add a new node to raft group
