@@ -188,7 +188,7 @@ func (d *peerMsgHandler) handleRequest(entry *eraftpb.Entry, msg *raft_cmdpb.Raf
 			wb.WriteToDB(d.peerStorage.Engines.Kv)
 			resp.Responses = []*raft_cmdpb.Response{{CmdType: raft_cmdpb.CmdType_Snap, Snap: &raft_cmdpb.SnapResponse{Region: d.Region()}}}
 			p.cb.Txn = d.peerStorage.Engines.Kv.NewTransaction(false)
-			wb = new(engine_util.WriteBatch)
+			wb = &engine_util.WriteBatch{}
 		}
 		p.cb.Done(resp)
 	})
