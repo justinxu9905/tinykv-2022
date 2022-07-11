@@ -322,6 +322,8 @@ func (r *Raft) Step(m pb.Message) error {
 			r.handleRequestVoteResponse(m)
 		} else if m.MsgType == pb.MessageType_MsgAppend {
 			r.handleAppendEntries(m)
+		} else if m.MsgType == pb.MessageType_MsgSnapshot {
+			r.handleSnapshot(m)
 		}
 		break
 	case StateLeader:
@@ -339,6 +341,8 @@ func (r *Raft) Step(m pb.Message) error {
 			r.handleAppendEntries(m)
 		} else if m.MsgType == pb.MessageType_MsgAppendResponse {
 			r.handleAppendResponse(m)
+		} else if m.MsgType == pb.MessageType_MsgSnapshot {
+			r.handleSnapshot(m)
 		}
 		break
 	}
