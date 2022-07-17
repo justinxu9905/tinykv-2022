@@ -123,8 +123,6 @@ type Raft struct {
 	// this peer's role
 	State StateType
 
-	peers []uint64
-
 	// votes records
 	votes map[uint64]bool
 
@@ -186,9 +184,8 @@ func newRaft(c *Config) *Raft {
 	if c.peers == nil {
 		c.peers = confState.Nodes
 	}
-	r.peers = c.peers
 	lastIndex := r.RaftLog.LastIndex()
-	for _, peer := range r.peers {
+	for _, peer := range c.peers {
 		if peer == r.id {
 			r.Prs[peer] = &Progress{Next: lastIndex + 1, Match: lastIndex}
 		} else {
@@ -240,6 +237,7 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.Lead = lead
 	r.votes = nil
 	r.electionElapsed = 0
+	r.leadTransferee = None
 }
 
 // becomeCandidate transform this peer's state to candidate
@@ -263,7 +261,7 @@ func (r *Raft) becomeLeader() {
 	r.electionElapsed = 0
 
 	lastLogIndex := r.RaftLog.LastIndex()
-	for _, peer := range r.peers {
+	for peer := range r.Prs {
 		r.Prs[peer].Next = lastLogIndex + 1
 		//r.Prs[peer].Match = lastLogIndex
 	}
@@ -276,7 +274,7 @@ func (r *Raft) becomeLeader() {
 	r.Prs[r.id].Match++
 
 	r.bcastAppend()
-	if len(r.peers) == 1 {
+	if len(r.Prs) == 1 {
 		r.RaftLog.committed = r.Prs[r.id].Match
 	}
 }
@@ -297,6 +295,9 @@ func (r *Raft) hardState() pb.HardState {
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
+	if _, ok := r.Prs[r.id]; !ok && m.MsgType == pb.MessageType_MsgTimeoutNow {
+		return nil
+	}
 	switch r.State {
 	case StateFollower:
 		if m.MsgType == pb.MessageType_MsgHup {
@@ -309,6 +310,13 @@ func (r *Raft) Step(m pb.Message) error {
 			r.handleAppendEntries(m)
 		} else if m.MsgType == pb.MessageType_MsgSnapshot {
 			r.handleSnapshot(m)
+		} else if m.MsgType == pb.MessageType_MsgTransferLeader {
+			if r.Lead != None {
+				m.To = r.Lead
+				r.msgs = append(r.msgs, m)
+			}
+		} else if m.MsgType == pb.MessageType_MsgTimeoutNow {
+			r.Step(pb.Message{From: r.id, To: r.id, MsgType: pb.MessageType_MsgHup})
 		}
 		break
 	case StateCandidate:
@@ -324,6 +332,11 @@ func (r *Raft) Step(m pb.Message) error {
 			r.handleAppendEntries(m)
 		} else if m.MsgType == pb.MessageType_MsgSnapshot {
 			r.handleSnapshot(m)
+		} else if m.MsgType == pb.MessageType_MsgTransferLeader {
+			if r.Lead != None {
+				m.To = r.Lead
+				r.msgs = append(r.msgs, m)
+			}
 		}
 		break
 	case StateLeader:
@@ -336,13 +349,17 @@ func (r *Raft) Step(m pb.Message) error {
 		} else if m.MsgType == pb.MessageType_MsgRequestVote {
 			r.handleRequestVote(m)
 		} else if m.MsgType == pb.MessageType_MsgPropose {
-			r.handlePropose(m)
+			if r.leadTransferee == None {
+				r.handlePropose(m)
+			}
 		} else if m.MsgType == pb.MessageType_MsgAppend {
 			r.handleAppendEntries(m)
 		} else if m.MsgType == pb.MessageType_MsgAppendResponse {
 			r.handleAppendResponse(m)
 		} else if m.MsgType == pb.MessageType_MsgSnapshot {
 			r.handleSnapshot(m)
+		} else if m.MsgType == pb.MessageType_MsgTransferLeader {
+			r.handleTransferLeader(m)
 		}
 		break
 	}
@@ -389,9 +406,8 @@ func (r *Raft) handleSnapshot(m pb.Message) {
 	r.RaftLog.committed = meta.Index
 	r.RaftLog.applied = meta.Index
 	r.RaftLog.first = meta.Index + 1
-	r.peers = meta.ConfState.Nodes
 	r.Prs = make(map[uint64]*Progress)
-	for _, peer := range r.peers {
+	for _, peer := range meta.ConfState.Nodes {
 		r.Prs[peer] = &Progress{}
 	}
 	r.RaftLog.pendingSnapshot = m.Snapshot
@@ -405,14 +421,48 @@ func (r *Raft) handleSnapshot(m pb.Message) {
 	})
 }
 
+func (r *Raft) handleTransferLeader(m pb.Message) {
+	if m.From == r.id {
+		return
+	}
+	if r.leadTransferee != None && r.leadTransferee == m.From {
+		return
+	}
+	if _, ok := r.Prs[m.From]; !ok {
+		return
+	}
+	r.leadTransferee = m.From
+	if r.Prs[m.From].Match == r.RaftLog.LastIndex() {
+		msg := pb.Message{
+			MsgType: pb.MessageType_MsgTimeoutNow,
+			From:    r.id,
+			To:      m.From,
+		}
+		r.msgs = append(r.msgs, msg)
+	} else {
+		r.sendAppend(m.From)
+	}
+}
+
 // addNode add a new node to raft group
 func (r *Raft) addNode(id uint64) {
 	// Your Code Here (3A).
+	if _, ok := r.Prs[id]; !ok {
+		r.Prs[id] = &Progress{}
+	}
+	r.PendingConfIndex = None
 }
 
 // removeNode remove a node from raft group
 func (r *Raft) removeNode(id uint64) {
 	// Your Code Here (3A).
+	if _, ok := r.Prs[id]; ok {
+		delete(r.Prs, id)
+		if r.State == StateLeader {
+			r.tryCommit()
+		}
+	}
+	r.PendingConfIndex = None
 }
 
 func (r *Raft) tryCommit() {

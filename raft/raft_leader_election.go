@@ -27,14 +27,14 @@ func (r *Raft) bcastHeartbeat() {
 func (r *Raft) handleHup() {
 	r.becomeCandidate()
 
-	if len(r.peers) == 1 {
+	if len(r.Prs) == 1 {
 		r.becomeLeader()
 	}
 
 	lastLogIndex := r.RaftLog.LastIndex()
 	lastLogTerm, _ := r.RaftLog.Term(lastLogIndex)
 
-	for _, peer := range r.peers {
+	for peer := range r.Prs {
 		if peer == r.id {
 			continue
 		}
@@ -111,7 +111,7 @@ func (r *Raft) handleRequestVote(m pb.Message) {
 
 func (r *Raft) handleRequestVoteResponse(m pb.Message) {
 	r.votes[m.From] = !m.Reject
-	n := len(r.peers)
+	n := len(r.Prs)
 	grant := 0
 	votes := len(r.votes)
 	for _, v := range r.votes {

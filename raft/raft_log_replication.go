@@ -64,7 +64,14 @@ func (r *Raft) handlePropose(m pb.Message) {
 
 func (r *Raft) appendEntries(entries []*pb.Entry) {
 	for _, entry := range entries {
+		if entry.EntryType == pb.EntryType_EntryConfChange {
+			if r.PendingConfIndex != None {
+				continue
+			}
+			r.PendingConfIndex = entry.Index
+		}
 		r.RaftLog.entries = append(r.RaftLog.entries, pb.Entry{
+			EntryType: entry.EntryType,
 			Index: r.RaftLog.LastIndex()+1,
 			Term: r.Term,
 			Data: entry.Data,
@@ -177,6 +184,16 @@ func (r *Raft) handleAppendResponse(m pb.Message) {
 		r.tryCommit()
 		if r.RaftLog.committed > oldCommitted {
 			r.bcastAppend()
+		}
+
+		if m.From == r.leadTransferee && m.Index == r.RaftLog.LastIndex() {
+			msg := pb.Message{
+				MsgType: pb.MessageType_MsgTimeoutNow,
+				From:    r.id,
+				To:      m.From,
+			}
+			r.msgs = append(r.msgs, msg)
+			r.leadTransferee = None
 		}
 		return
 	}
