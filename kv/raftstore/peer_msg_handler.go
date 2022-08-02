@@ -464,7 +464,10 @@ func (d *peerMsgHandler) proposeRequest(msg *raft_cmdpb.RaftCmdRequest, cb *mess
 		}
 	}
 
-	data, _ := msg.Marshal()
+	data, err := msg.Marshal()
+	if err != nil {
+		panic(err)
+	}
 	p := &proposal{index: d.nextProposalIndex(), term: d.Term(), cb: cb}
 	d.proposals = append(d.proposals, p)
 	d.RaftGroup.Propose(data)
@@ -496,8 +499,7 @@ func (d *peerMsgHandler) proposeAdminRequest(msg *raft_cmdpb.RaftCmdRequest, cb 
 		}
 		d.RaftGroup.Propose(data)
 	case raft_cmdpb.AdminCmdType_TransferLeader:
-		transferee := msg.AdminRequest.TransferLeader.Peer
-		d.RaftGroup.TransferLeader(transferee.Id)
+		d.RaftGroup.TransferLeader(req.TransferLeader.Peer.Id)
 		cb.Done(&raft_cmdpb.RaftCmdResponse{
 			Header: &raft_cmdpb.RaftResponseHeader{},
 			AdminResponse: &raft_cmdpb.AdminResponse{
