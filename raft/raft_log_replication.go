@@ -27,6 +27,7 @@ func (r *Raft) sendAppend(to uint64) bool {
 	} else {
 		for _, entry := range r.RaftLog.entries[nextIdx-r.RaftLog.first:] {
 			entries = append(entries, &pb.Entry{
+				EntryType: entry.EntryType,
 				Index: entry.Index,
 				Term: entry.Term,
 				Data: entry.Data,

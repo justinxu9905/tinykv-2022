@@ -448,7 +448,7 @@ func (r *Raft) handleTransferLeader(m pb.Message) {
 func (r *Raft) addNode(id uint64) {
 	// Your Code Here (3A).
 	if _, ok := r.Prs[id]; !ok {
-		r.Prs[id] = &Progress{}
+		r.Prs[id] = &Progress{Next: 1}
 	}
 	r.PendingConfIndex = None
 }
