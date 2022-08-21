@@ -2,11 +2,11 @@ package server
 
 import (
 	"context"
-
 	"github.com/pingcap-incubator/tinykv/kv/coprocessor"
 	"github.com/pingcap-incubator/tinykv/kv/storage"
 	"github.com/pingcap-incubator/tinykv/kv/storage/raft_storage"
 	"github.com/pingcap-incubator/tinykv/kv/transaction/latches"
+	"github.com/pingcap-incubator/tinykv/kv/transaction/mvcc"
 	coppb "github.com/pingcap-incubator/tinykv/proto/pkg/coprocessor"
 	"github.com/pingcap-incubator/tinykv/proto/pkg/kvrpcpb"
 	"github.com/pingcap-incubator/tinykv/proto/pkg/tinykvpb"
@@ -50,12 +50,105 @@ func (server *Server) Snapshot(stream tinykvpb.TinyKv_SnapshotServer) error {
 // Transactional API.
 func (server *Server) KvGet(_ context.Context, req *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error) {
 	// Your Code Here (4B).
-	return nil, nil
+	resp := &kvrpcpb.GetResponse{}
+	reader, err := server.storage.Reader(req.Context)
+	if err != nil {
+		return resp, err
+	}
+	defer reader.Close()
+
+	txn := mvcc.NewMvccTxn(reader, req.Version)
+	lock, err := txn.GetLock(req.Key)
+	if err != nil {
+		return resp, err
+	}
+	if lock != nil && lock.Ts <= req.Version {
+		resp.Error = &kvrpcpb.KeyError{
+			Locked: &kvrpcpb.LockInfo{
+				PrimaryLock: lock.Primary,
+				LockVersion: lock.Ts,
+				Key: 		 req.Key,
+				LockTtl: 	 lock.Ttl,
+			},
+		}
+		return resp, nil
+	}
+
+	value, err := txn.GetValue(req.Key)
+	if err != nil {
+		return resp, err
+	}
+	if value == nil {
+		resp.NotFound = true
+		return resp, nil
+	}
+	resp.Value = value
+	return resp, nil
 }
 
 func (server *Server) KvPrewrite(_ context.Context, req *kvrpcpb.PrewriteRequest) (*kvrpcpb.PrewriteResponse, error) {
 	// Your Code Here (4B).
-	return nil, nil
+	resp := &kvrpcpb.PrewriteResponse{}
+	reader, err := server.storage.Reader(req.Context)
+	if err != nil {
+		return resp, err
+	}
+	defer reader.Close()
+
+	txn := mvcc.NewMvccTxn(reader, req.StartVersion)
+	for _, mutation := range req.Mutations {
+		write, commitTs, err := txn.MostRecentWrite(mutation.Key)
+		if err != nil {
+			return resp, err
+		}
+		if commitTs > req.StartVersion {
+			resp.Errors = append(resp.Errors, &kvrpcpb.KeyError{
+				Conflict: &kvrpcpb.WriteConflict{
+					StartTs: write.StartTS,
+					ConflictTs: commitTs,
+					Key: mutation.Key,
+					Primary: req.PrimaryLock,
+				},
+			})
+			continue
+		}
+
+		lock, err := txn.GetLock(mutation.Key)
+		if err != nil {
+			return resp, err
+		}
+		if lock != nil {
+			resp.Errors = append(resp.Errors, &kvrpcpb.KeyError{
+				Locked: &kvrpcpb.LockInfo{
+					PrimaryLock: lock.Primary,
+					LockVersion: lock.Ts,
+					Key: 		 mutation.Key,
+					LockTtl: 	 lock.Ttl,
+				},
+			})
+			continue
+		}
+
+		newLock := &mvcc.Lock{
+			Primary: req.PrimaryLock,
+			Ts: req.StartVersion,
+			Ttl: req.LockTtl,
+		}
+		switch mutation.Op {
+		case kvrpcpb.Op_Put:
+			newLock.Kind = mvcc.WriteKindPut
+		case kvrpcpb.Op_Del:
+			newLock.Kind = mvcc.WriteKindDelete
+		case kvrpcpb.Op_Rollback:
+			newLock.Kind = mvcc.WriteKindRollback
+		}
+		txn.PutLock(mutation.Key, newLock)
+
+		txn.PutValue(mutation.Key, mutation.Value)
+
+		server.storage.Write(req.Context, txn.Writes())
+	}
+	return resp, nil
 }
 
 func (server *Server) KvCommit(_ context.Context, req *kvrpcpb.CommitRequest) (*kvrpcpb.CommitResponse, error) {
