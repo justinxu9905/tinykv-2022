@@ -97,15 +97,15 @@ func (server *Server) KvPrewrite(_ context.Context, req *kvrpcpb.PrewriteRequest
 
 	txn := mvcc.NewMvccTxn(reader, req.StartVersion)
 	for _, mutation := range req.Mutations {
-		write, commitTs, err := txn.MostRecentWrite(mutation.Key)
+		write, ts, err := txn.MostRecentWrite(mutation.Key)
 		if err != nil {
 			return resp, err
 		}
-		if commitTs > req.StartVersion {
+		if write != nil && ts >= req.StartVersion {
 			resp.Errors = append(resp.Errors, &kvrpcpb.KeyError{
 				Conflict: &kvrpcpb.WriteConflict{
 					StartTs: write.StartTS,
-					ConflictTs: commitTs,
+					ConflictTs: ts,
 					Key: mutation.Key,
 					Primary: req.PrimaryLock,
 				},
@@ -117,7 +117,7 @@ func (server *Server) KvPrewrite(_ context.Context, req *kvrpcpb.PrewriteRequest
 		if err != nil {
 			return resp, err
 		}
-		if lock != nil {
+		if lock != nil && lock.Ts != req.StartVersion {
 			resp.Errors = append(resp.Errors, &kvrpcpb.KeyError{
 				Locked: &kvrpcpb.LockInfo{
 					PrimaryLock: lock.Primary,
@@ -146,14 +146,55 @@ func (server *Server) KvPrewrite(_ context.Context, req *kvrpcpb.PrewriteRequest
 
 		txn.PutValue(mutation.Key, mutation.Value)
 
-		server.storage.Write(req.Context, txn.Writes())
+		err = server.storage.Write(req.Context, txn.Writes())
+		if err != nil {
+			return nil, err
+		}
 	}
 	return resp, nil
 }
 
 func (server *Server) KvCommit(_ context.Context, req *kvrpcpb.CommitRequest) (*kvrpcpb.CommitResponse, error) {
 	// Your Code Here (4B).
-	return nil, nil
+	resp := &kvrpcpb.CommitResponse{}
+	reader, err := server.storage.Reader(req.Context)
+	if err != nil {
+		return resp, err
+	}
+	defer reader.Close()
+
+	txn := mvcc.NewMvccTxn(reader, req.StartVersion)
+
+	server.Latches.WaitForLatches(req.Keys)
+	defer server.Latches.ReleaseLatches(req.Keys)
+
+	for _, key := range req.Keys {
+		lock, err := txn.GetLock(key)
+		if err != nil {
+			return nil, err
+		}
+		if lock == nil {
+			write, ts, _ := txn.MostRecentWrite(key)
+			if ts == req.CommitVersion && write.Kind == mvcc.WriteKindRollback {
+				resp.Error = &kvrpcpb.KeyError{} // ?
+			}
+			return resp, nil
+		}
+		if lock.Ts != req.StartVersion {
+			resp.Error = &kvrpcpb.KeyError{}
+			return resp, nil
+		}
+		txn.PutWrite(key, req.CommitVersion, &mvcc.Write{
+			StartTS: req.StartVersion,
+			Kind:    lock.Kind,
+		})
+		txn.DeleteLock(key)
+	}
+	err = server.storage.Write(req.Context, txn.Writes())
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 func (server *Server) KvScan(_ context.Context, req *kvrpcpb.ScanRequest) (*kvrpcpb.ScanResponse, error) {
