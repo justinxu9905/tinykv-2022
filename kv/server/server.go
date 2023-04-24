@@ -20,7 +20,7 @@ var _ tinykvpb.TinyKvServer = new(Server)
 type Server struct {
 	storage storage.Storage
 
-	// (Used in 4A/4B)
+	// (Used in 4B)
 	Latches *latches.Latches
 
 	// coprocessor API handler, out of course scope

@@ -144,11 +144,11 @@ func TestLeaderElectionOverwriteNewerLogs2AB(t *testing.T) {// dead loop
 	// the case where older log entries are overwritten, so this test
 	// focuses on the case where the newer entries are lost).
 	n := newNetworkWithConfig(cfg,
-		entsWithConfig(cfg, 1),     // Node 1: Won first election
-		entsWithConfig(cfg, 1),     // Node 2: Got logs from node 1
-		entsWithConfig(cfg, 2),     // Node 3: Won second election
-		votedWithConfig(cfg, 3, 2), // Node 4: Voted but didn't get logs
-		votedWithConfig(cfg, 3, 2)) // Node 5: Voted but didn't get logs
+		entsWithConfig(cfg, 1, 1),     // Node 1: Won first election
+		entsWithConfig(cfg, 2, 1),     // Node 2: Got logs from node 1
+		entsWithConfig(cfg, 3, 2),     // Node 3: Won second election
+		votedWithConfig(cfg, 4, 3, 2), // Node 4: Voted but didn't get logs
+		votedWithConfig(cfg, 5, 3, 2)) // Node 5: Voted but didn't get logs
 
 	// Node 1 campaigns. The election fails because a quorum of nodes
 	// know about the election that already happened at term 2. Node 1's
@@ -175,7 +175,7 @@ func TestLeaderElectionOverwriteNewerLogs2AB(t *testing.T) {// dead loop
 	// term 3 at index 2).
 	for i := range n.peers {
 		sm := n.peers[i].(*Raft)
-		entries := sm.RaftLog.entries
+		entries := sm.RaftLog.allEntries()
 		if len(entries) != 2 {
 			t.Fatalf("node %d: len(entries) == %d, want 2", i, len(entries))
 		}
@@ -264,7 +264,7 @@ func TestLogReplication2AB(t *testing.T) {
 			newNetwork(nil, nil, nil),
 			[]pb.Message{
 				{From: 1, To: 1, MsgType: pb.MessageType_MsgPropose, Entries: []*pb.Entry{{Data: []byte("somedata")}}},
-				{From: 1, To: 2, MsgType: pb.MessageType_MsgHup},
+				{From: 2, To: 2, MsgType: pb.MessageType_MsgHup},
 				{From: 1, To: 2, MsgType: pb.MessageType_MsgPropose, Entries: []*pb.Entry{{Data: []byte("somedata")}}},
 			},
 			4,
@@ -733,8 +733,8 @@ func TestAllServerStepdown2AB(t *testing.T) {
 			if sm.RaftLog.LastIndex() != tt.windex {
 				t.Errorf("#%d.%d index = %v , want %v", i, j, sm.RaftLog.LastIndex(), tt.windex)
 			}
-			if uint64(len(sm.RaftLog.entries)) != tt.windex {
-				t.Errorf("#%d.%d len(ents) = %v , want %v", i, j, len(sm.RaftLog.entries), tt.windex)
+			if uint64(len(sm.RaftLog.allEntries())) != tt.windex {
+				t.Errorf("#%d.%d len(ents) = %v , want %v", i, j, len(sm.RaftLog.allEntries()), tt.windex)
 			}
 			wlead := uint64(2)
 			if msgType == pb.MessageType_MsgRequestVote {
@@ -912,8 +912,8 @@ func TestHeartbeatUpdateCommit2AB(t *testing.T) {
 	}
 	for i, tt := range tests {
 		sm1 := newTestRaft(1, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
-		sm2 := newTestRaft(1, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
-		sm3 := newTestRaft(1, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
+		sm2 := newTestRaft(2, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
+		sm3 := newTestRaft(3, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
 		nt := newNetwork(sm1, sm2, sm3)
 		nt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
 		nt.isolate(1)
@@ -1091,6 +1091,35 @@ func TestRestoreFromSnapMsg2C(t *testing.T) {
 
 	if sm.Lead != uint64(1) {
 		t.Errorf("sm.Lead = %d, want 1", sm.Lead)
+	}
+}
+
+func TestRestoreFromSnapWithOverlapingPeersMsg2C(t *testing.T) {
+	s := pb.Snapshot{
+		Metadata: &pb.SnapshotMetadata{
+			Index:     11, // magic number
+			Term:      11, // magic number
+			ConfState: &pb.ConfState{Nodes: []uint64{2, 3, 4}},
+		},
+	}
+	m := pb.Message{MsgType: pb.MessageType_MsgSnapshot, From: 1, Term: 2, Snapshot: &s}
+
+	sm := newTestRaft(2, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
+	sm.Step(m)
+
+	if sm.Lead != uint64(1) {
+		t.Errorf("sm.Lead = %d, want 1", sm.Lead)
+	}
+
+	nodes := s.Metadata.ConfState.Nodes
+	if len(nodes) != len(sm.Prs) {
+		t.Errorf("len(sm.Prs) = %d, want %d", len(sm.Prs), len(nodes))
+	}
+
+	for _, p := range nodes {
+		if _, ok := sm.Prs[p]; !ok {
+			t.Errorf("missing peer %d", p)
+		}
 	}
 }
 
@@ -1515,12 +1544,12 @@ func TestSplitVote2AA(t *testing.T) {
 	}
 }
 
-func entsWithConfig(configFunc func(*Config), terms ...uint64) *Raft {
+func entsWithConfig(configFunc func(*Config), id uint64, terms ...uint64) *Raft {
 	storage := NewMemoryStorage()
 	for i, term := range terms {
 		storage.Append([]pb.Entry{{Index: uint64(i + 1), Term: term}})
 	}
-	cfg := newTestConfig(1, []uint64{}, 5, 1, storage)
+	cfg := newTestConfig(id, []uint64{}, 5, 1, storage)
 	if configFunc != nil {
 		configFunc(cfg)
 	}
@@ -1532,10 +1561,10 @@ func entsWithConfig(configFunc func(*Config), terms ...uint64) *Raft {
 // votedWithConfig creates a raft state machine with Vote and Term set
 // to the given value but no log entries (indicating that it voted in
 // the given term but has not received any logs).
-func votedWithConfig(configFunc func(*Config), vote, term uint64) *Raft {
+func votedWithConfig(configFunc func(*Config), id, vote, term uint64) *Raft {
 	storage := NewMemoryStorage()
 	storage.SetHardState(pb.HardState{Vote: vote, Term: term})
-	cfg := newTestConfig(1, []uint64{}, 5, 1, storage)
+	cfg := newTestConfig(id, []uint64{}, 5, 1, storage)
 	if configFunc != nil {
 		configFunc(cfg)
 	}
