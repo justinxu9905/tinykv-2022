@@ -116,11 +116,10 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 	}
 	logTermAtPrevIndex, _ := r.RaftLog.Term(prevLogIndex)
 	if logTermAtPrevIndex != m.LogTerm {
-		term := logTermAtPrevIndex
 		idx := prevLogIndex
 		for idx > r.RaftLog.committed {
 			curTerm, _ := r.RaftLog.Term(idx)
-			if curTerm != term {
+			if curTerm != logTermAtPrevIndex {
 				break
 			}
 			idx -= 1

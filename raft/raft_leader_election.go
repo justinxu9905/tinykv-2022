@@ -29,6 +29,7 @@ func (r *Raft) handleHup() {
 
 	if len(r.Prs) == 1 {
 		r.becomeLeader()
+		return
 	}
 
 	lastLogIndex := r.RaftLog.LastIndex()
